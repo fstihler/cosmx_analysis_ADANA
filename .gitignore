@@ -1,0 +1,43 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Claude Code local config
+.claude/
+
+# Large data / output files (keep outputs directory out of git)
+*.RDS
+*.rds
+*.h5
+*.h5ad
+*.loom
+*.csv
+*.tsv
+*.txt
+*.pdf
+*.png
+*.svg
+*.eps
+*.tiff
+*.tif
+*.bam
+*.bai
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+
+# But DO track notebooks and R scripts (override above if needed)
+!*.ipynb
+!*.R
+!*.r
