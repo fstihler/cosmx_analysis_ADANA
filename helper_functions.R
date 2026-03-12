@@ -1573,7 +1573,7 @@ CT_QC_plot <- function(seu, cluster_col, cluster_pal=NULL, annotation_col = NULL
     pdf(file.path(out_dir, paste0("Cluster_QC_", cluster_col, ".pdf")), width = 10, height = 10)
 
     print(count_per_ct(seu, cluster_col=cluster_col, cluster_pal = cluster_pal))
-    sp_plot <- dddd(cluster_col,
+    sp_plot <- xyplot(cluster_col,
                    x_column = "x_slide_mm",
                    y_column = "y_slide_mm",
                    cls = cluster_cls,
@@ -1700,7 +1700,7 @@ plot_celltype_highlights <- function(seu,
   for (ct in celltypes) {
     message(paste0("Plotting highlighted celltype: ", ct))
     
-    # Use dddd's plotfirst functionality to control layering
+    # Use xyplot's plotfirst functionality to control layering
     # First plot background with low alpha, then overlay the celltype of interest
     p <- xyplot(
       cluster_col,
