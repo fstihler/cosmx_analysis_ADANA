@@ -20,7 +20,7 @@ library(dplyr)
 
 determine_panck_threshold <- function(seurat_obj,
                                        panck_col = "Mean.PanCK",
-                                       threshold = 3500,
+                                       threshold = "auto",
                                        output_dir = "results/celltyping") {
 
   if (!panck_col %in% colnames(seurat_obj@meta.data)) {
@@ -30,6 +30,27 @@ determine_panck_threshold <- function(seurat_obj,
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
   panck_vals <- seurat_obj@meta.data[[panck_col]]
+
+  # Auto-detect threshold from bimodal density minimum
+  if (identical(threshold, "auto")) {
+    log_vals <- log1p(panck_vals)
+    dens <- density(log_vals, n = 1024)
+    # Find local minima: where derivative goes from negative to positive
+    dy <- diff(dens$y)
+    minima_idx <- which(dy[-length(dy)] < 0 & dy[-1] > 0) + 1
+    if (length(minima_idx) == 0) {
+      # Fallback: use median if no valley found
+      threshold <- median(panck_vals, na.rm = TRUE)
+      message("No bimodal valley detected, using median as threshold: ", round(threshold))
+    } else {
+      # Pick the deepest valley (lowest density at the minimum)
+      best_idx <- minima_idx[which.min(dens$y[minima_idx])]
+      threshold <- expm1(dens$x[best_idx])
+      message("Auto-detected bimodal valley at log1p = ", round(dens$x[best_idx], 3),
+              " -> threshold = ", round(threshold))
+    }
+  }
+
   gate <- ifelse(panck_vals >= threshold, "PanCK_high", "PanCK_low")
 
   n_high <- sum(gate == "PanCK_high")
