@@ -5043,3 +5043,152 @@ generate_smide_report <- function(plots, run_tag, config, output_file,
     message("Report saved to: ", output_file)
     invisible(output_file)
 }
+
+
+## CLUSTER CHARACTERIZATION
+
+characterize_clusters <- function(
+  seurat_obj = NULL,
+  counts = NULL,
+  metadata = NULL,
+  cluster_col = "IST_cluster",
+  cell_id_col = "cell_ID_new",
+  n_top_markers = 20,
+  min_cluster_prop = 0.05,
+  output_dir = NULL,
+  prefix = "IST"
+) {
+
+  # --- 0. Check HieraType availability ---
+  if (!requireNamespace("HieraType", quietly = TRUE)) {
+    stop("Package 'HieraType' is required but not installed.\n",
+         "Install from GitHub: devtools::install_github('Nanostring-Biostats/HieraType')",
+         call. = FALSE)
+  }
+
+  # --- 1. Extract data ---
+  if (!is.null(seurat_obj)) {
+    message("Extracting counts and metadata from Seurat object...")
+    counts <- Matrix::t(seu[["RNA"]]$counts)
+    metadata <- seurat_obj@meta.data
+  } else {
+    if (is.null(counts) || is.null(metadata)) {
+      stop("When seurat_obj is NULL, both 'counts' (cells x genes) and 'metadata' must be provided.",
+           call. = FALSE)
+    }
+  }
+
+  # Validate required columns
+  if (!cluster_col %in% colnames(metadata)) {
+    stop("cluster_col '", cluster_col, "' not found in metadata. ",
+         "Available columns: ", paste(head(colnames(metadata), 20), collapse = ", "),
+         call. = FALSE)
+  }
+  if (!cell_id_col %in% colnames(metadata)) {
+    stop("cell_id_col '", cell_id_col, "' not found in metadata. ",
+         "Available columns: ", paste(head(colnames(metadata), 20), collapse = ", "),
+         call. = FALSE)
+  }
+
+  n_clusters <- length(unique(metadata[[cluster_col]][!is.na(metadata[[cluster_col]])]))
+
+  # --- 2. Compute clusterwise fold-change markers ---
+  message("Computing markers for ", n_clusters, " clusters...")
+  markers <- HieraType::clusterwise_foldchange_metrics(
+    Matrix::t(counts),
+    metadata = metadata,
+    cluster_column = cluster_col,
+    cellid_column = cell_id_col
+  )
+
+  # --- 3. Compute prioritystat and select top markers ---
+  markers$prioritystat <- (markers$cluster_expr + 0.025) / (markers$clusterprime_expr + 0.025)
+
+  message("Selecting top ", n_top_markers, " markers per cluster (min_cluster_prop = ", min_cluster_prop, ")...")
+  marker_table <- do.call(rbind, lapply(split(markers, markers$cluster), function(df) {
+    df <- df[df$cluster_prop >= min_cluster_prop, ]
+    df <- df[order(df$prioritystat, decreasing = TRUE), ]
+    head(df, n_top_markers)
+  }))
+  rownames(marker_table) <- NULL
+
+  message("Top markers selected: ", nrow(marker_table), " rows across ",
+          length(unique(marker_table$cluster)), " clusters")
+
+  # --- 4. Compute per-cluster summary statistics ---
+  message("Computing cluster summary statistics...")
+  total_cells <- nrow(metadata)
+  clusters_vec <- metadata[[cluster_col]]
+
+  # Find fluorescence columns (case-insensitive)
+  panck_col <- c("Mean.PanCK")    # grep("panck", colnames(metadata), ignore.case = TRUE, value = TRUE)
+  cd45_col  <- c("Mean.CD45")    # grep("cd45",  colnames(metadata), ignore.case = TRUE, value = TRUE)
+
+  if (length(panck_col) == 0) {
+    warning("No PanCK column found in metadata. Setting mean_PanCK to NA.")
+    panck_col <- NULL
+  } else {
+    panck_col <- panck_col[1]
+    message("  Using PanCK column: ", panck_col)
+  }
+
+  if (length(cd45_col) == 0) {
+    warning("No CD45 column found in metadata. Setting mean_CD45 to NA.")
+    cd45_col <- NULL
+  } else {
+    cd45_col <- cd45_col[1]
+    message("  Using CD45 column: ", cd45_col)
+  }
+
+  cluster_ids <- unique(clusters_vec[!is.na(clusters_vec)])
+
+  cluster_summary <- do.call(rbind, lapply(cluster_ids, function(cl) {
+    mask <- clusters_vec == cl & !is.na(clusters_vec)
+    md_cl <- metadata[mask, , drop = FALSE]
+    n <- nrow(md_cl)
+
+    data.frame(
+      cluster = cl,
+      n_cells = n,
+      pct_of_total = round(100 * n / total_cells, 2),
+      mean_nCount_RNA = if ("nCount_RNA" %in% colnames(md_cl)) round(mean(md_cl$nCount_RNA, na.rm = TRUE), 2) else NA,
+      median_nCount_RNA = if ("nCount_RNA" %in% colnames(md_cl)) round(median(md_cl$nCount_RNA, na.rm = TRUE), 2) else NA,
+      mean_nFeature_RNA = if ("nFeature_RNA" %in% colnames(md_cl)) round(mean(md_cl$nFeature_RNA, na.rm = TRUE), 2) else NA,
+      mean_PanCK = if (!is.null(panck_col)) round(mean(md_cl[[panck_col]], na.rm = TRUE), 2) else NA,
+      mean_CD45 = if (!is.null(cd45_col)) round(mean(md_cl[[cd45_col]], na.rm = TRUE), 2) else NA,
+      stringsAsFactors = FALSE
+    )
+  }))
+  rownames(cluster_summary) <- NULL
+  cluster_summary <- cluster_summary[order(cluster_summary$n_cells, decreasing = TRUE), ]
+
+  # --- 5. Save outputs ---
+  if (!is.null(output_dir)) {
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    message("Saving results to ", output_dir, "/...")
+
+    write.csv(marker_table, file.path(output_dir, paste0(prefix, "_top_markers.csv")), row.names = FALSE)
+    write.csv(markers, file.path(output_dir, paste0(prefix, "_all_markers.csv")), row.names = FALSE)
+    write.csv(cluster_summary, file.path(output_dir, paste0(prefix, "_cluster_summary.csv")), row.names = FALSE)
+  }
+
+  # --- 6. Return ---
+  invisible(list(
+    top_markers = marker_table,
+    all_markers = markers,
+    cluster_summary = cluster_summary
+  ))
+}
+
+# Usage:
+# res <- characterize_clusters(seurat_obj, cluster_col = "IST_cluster")
+# View(res$top_markers)
+# View(res$cluster_summary)
+#
+# Or with direct counts/metadata:
+# res <- characterize_clusters(
+#   counts = my_counts_matrix,       # cells x genes sparse matrix
+#   metadata = my_metadata,
+#   cluster_col = "cluster",
+#   cell_id_col = "cell_ID"
+# )
